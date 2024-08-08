@@ -28,5 +28,8 @@ setup(
     python_requires=">=3.6",
     install_requires=[
         "openpyxl>=3.0.0",
+        "pandas>=2.2.2",
+        "Jinja2>=3.1.4",
+        "pywin32",
     ],
 )

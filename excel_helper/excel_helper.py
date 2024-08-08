@@ -1,8 +1,26 @@
-from typing import Any, Dict, List
+import contextlib
+from typing import Any, Dict, List, Literal, Optional, Tuple, TypedDict, Union
 
 import openpyxl
+import openpyxl.utils
+import openpyxl.utils.exceptions
+import pandas as pd
+from jinja2 import Template
+from openpyxl.chart import BarChart, Reference
+from openpyxl.formatting.rule import ColorScaleRule
 from openpyxl.formula.translate import Translator
 from openpyxl.utils import get_column_letter
+from openpyxl.workbook.workbook import Workbook
+from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.worksheet.table import Table
+from openpyxl.worksheet.worksheet import Worksheet
+
+
+class ColorScaleKwargs(TypedDict, total=False):
+    start_color: str
+    end_color: str
+    start_type: Literal["min", "max", "percentile", "num", "formula"]
+    end_type: Literal["min", "max", "percentile", "num", "formula"]
 
 
 class ExcelHelper:
@@ -87,11 +105,9 @@ class ExcelHelper:
             max_length = 0
             column_letter = get_column_letter(column[0].column)
             for cell in column:
-                try:
+                with contextlib.suppress(Exception):
                     if len(str(cell.value)) > max_length:
                         max_length = len(cell.value)
-                except Exception:
-                    pass
             adjusted_width = max_length + 2
             self.active_sheet.column_dimensions[column_letter].width = adjusted_width
 
@@ -193,3 +209,235 @@ class ExcelHelper:
         table_range = f"{get_column_letter(table_start_col)}{table_start_row}:{get_column_letter(table_end_col)}{table_end_row}"
         formula = f"=VLOOKUP({lookup_value}, {table_range}, {col_index}, FALSE)"
         self.set_formula(result_row, result_col, formula)
+
+    def create_chart(
+        self,
+        chart_type: str,
+        data_range: Union[List[int], Tuple[int, int, int, int]],
+        title: str,
+        x_axis: str,
+        y_axis: str,
+        location: str,
+    ) -> None:
+        """
+        Create a chart in the Excel workbook.
+        """
+        chart = BarChart() if chart_type.lower() == "bar" else None
+        # TODO Add more chart types as needed
+
+        if chart:
+            data = Reference(
+                self.active_sheet,
+                min_col=data_range[0],
+                min_row=data_range[1],
+                max_col=data_range[2],
+                max_row=data_range[3],
+            )
+            chart.add_data(data, titles_from_data=True)
+            chart.title = title
+            chart.x_axis.title = x_axis
+            chart.y_axis.title = y_axis
+            self.active_sheet.add_chart(chart, location)
+
+    def create_pivot_table(
+        self,
+        source_data: List[List[Any]],
+        pivot_location: str,
+        rows: List[str],
+        columns: List[str],
+        values: List[str],
+    ) -> None:
+        """
+        Create a pivot table in the Excel workbook.
+        """
+        pivot_sheet: Worksheet = self.workbook.create_sheet("PivotTable")
+        pivot_sheet.cell(row=1, column=1, value="Pivot Table")
+
+        # Create a PivotTable
+        pivot_table: Table = Table(
+            displayName="PivotTable",
+            ref=f"A1:{get_column_letter(len(source_data[0]))}{len(source_data)}",
+        )
+        pivot_sheet.add_table(pivot_table)
+
+        for row in source_data:
+            pivot_sheet.append(row)
+
+        pivot_fields: List[dict] = [
+            {
+                "sourceField": field,
+                "orientation": (
+                    "row"
+                    if field in rows
+                    else "column" if field in columns else "value"
+                ),
+            }
+            for field in rows + columns + values
+        ]
+
+        pivot_sheet.pivot_tables.add(
+            "PivotTable1",
+            f"A1:{get_column_letter(len(source_data[0]))}{len(source_data)}",
+            pivot_location,
+            pivot_fields,
+        )
+
+    def add_data_validation(
+        self,
+        cell_range: str,
+        validation_type: str,
+        validation_criteria: str,
+        validation_value: Union[str, int, float],
+    ) -> None:
+        """
+        Add data validation to a range of cells.
+        """
+        dv = DataValidation(
+            type=validation_type,
+            operator=validation_criteria,
+            formula1=validation_value,
+        )
+        self.active_sheet.add_data_validation(dv)
+        dv.add(cell_range)
+
+    def apply_conditional_formatting(
+        self,
+        cell_range: str,
+        rule_type: Literal["color_scale"],
+        **kwargs: ColorScaleKwargs,
+    ) -> None:
+        """
+        Apply conditional formatting to a range of cells.
+        """
+        if rule_type != "color_scale":
+            raise ValueError(f"Unsupported rule_type: {rule_type}")
+        rule = ColorScaleRule(
+            start_color=kwargs.get("start_color", "FFFFFF"),
+            end_color=kwargs.get("end_color", "FF0000"),
+            start_type=kwargs.get("start_type", "min"),
+            end_type=kwargs.get("end_type", "max"),
+        )
+        self.active_sheet.conditional_formatting.add(cell_range, rule)
+
+    def create_macro(self, macro_name: str, macro_code: str) -> None:
+        """
+        Create a new macro in the Excel workbook.
+        """
+        if not hasattr(self.workbook, "vba_archive"):
+            raise AttributeError(
+                "This workbook doesn't support VBA macros. "
+                "Make sure you've created it with keep_vba=True."
+            )
+
+        if not self.workbook.vba_archive:
+            self.workbook.create_vba_module()
+
+        module = self.workbook.vba_archive.get_or_create_module("Module1")
+        module.write(f"Sub {macro_name}()\n{macro_code}\nEnd Sub")
+
+    def run_macro(self, macro_name: str) -> None:
+        """
+        Run a macro in the Excel workbook.
+        """
+        if not self._is_windows():
+            raise OSError("This method can only be run on Windows.")
+
+        try:
+            import win32com.client
+
+            excel: Any = win32com.client.Dispatch("Excel.Application")
+            wb: Any = excel.Workbooks.Open(self.filename)
+            excel.Application.Run(macro_name)
+            wb.Save()
+        except Exception as e:
+            # sourcery skip: raise-specific-error
+            raise Exception(f"Error running macro: {str(e)}") from e
+        finally:
+            if "excel" in locals():
+                excel.Application.Quit()
+
+    def _is_windows(self) -> bool:
+        """Check if the current operating system is Windows."""
+        import platform
+
+        return platform.system().lower() == "windows"
+
+    def to_dataframe(
+        self,
+        sheet_name: Union[str, None] = None,
+        start_row: int = 1,
+        start_col: int = 1,
+    ):
+        """Convert Excel data to a Pandas DataFrame."""
+        if sheet_name:
+            self.select_sheet(sheet_name)
+
+        data = self.read_range(
+            start_row,
+            start_col,
+            self.active_sheet.max_row,
+            self.active_sheet.max_column,
+        )
+        return pd.DataFrame(data[1:], columns=data[0])
+
+    def from_dataframe(
+        self,
+        df: pd.DataFrame,
+        sheet_name: Optional[str] = None,
+        start_row: int = 1,
+        start_col: int = 1,
+    ) -> None:
+        """
+        Write a Pandas DataFrame to the Excel workbook.
+        """
+        if df.empty:
+            raise ValueError("Cannot write an empty DataFrame to Excel.")
+
+        if sheet_name:
+            self.select_sheet(sheet_name)
+
+        self.write_range(
+            start_row, start_col, [df.columns.tolist()] + df.values.tolist()
+        )
+
+    def use_template(
+        self, template_file: str, output_file: str, context: Dict[str, Any]
+    ) -> None:
+        """
+        Use an Excel template to generate a report with dynamic data.
+
+        This method loads an Excel template, replaces placeholders with dynamic data,
+        and saves the result to a new file.
+
+        Args:
+            template_file (str): The path to the Excel template file.
+            output_file (str): The path where the generated report will be saved.
+            context (Dict[str, Any]): A dictionary containing the data to be inserted into the template.
+                Keys should match the placeholders in the template.
+
+        Returns:
+            None
+
+        Raises:
+            FileNotFoundError: If the template file doesn't exist.
+            PermissionError: If there's no write permission for the output file.
+            ValueError: If the template file is not a valid Excel file.
+        """
+        try:
+            wb: Workbook = openpyxl.load_workbook(template_file)
+            ws: Worksheet = wb.active
+
+            for cell in ws._cells.values():
+                if cell.data_type == "s" and "{{" in cell.value and "}}" in cell.value:
+                    template = Template(cell.value)
+                    cell.value = template.render(context)
+
+            wb.save(output_file)
+        except FileNotFoundError as e:
+            raise FileNotFoundError(f"Template file not found: {template_file}") from e
+        except PermissionError as e:
+            raise PermissionError(
+                f"Permission denied when trying to save to: {output_file}"
+            ) from e
+        except openpyxl.utils.exceptions.InvalidFileException as e:
+            raise ValueError(f"Invalid Excel file: {template_file}") from e
