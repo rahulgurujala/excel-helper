@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="excel-helper",
-    version="0.1.1.",
+    version="1.0.0",
     author="Rahul Gurujala",
     author_email="isaacnewtonrahul@gmail.com",
     description="A simple library to simplify Excel manipulation using openpyxl",
