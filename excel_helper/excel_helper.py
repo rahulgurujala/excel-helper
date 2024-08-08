@@ -1,7 +1,8 @@
+from typing import Any, Dict, List
+
 import openpyxl
-from openpyxl.utils import get_column_letter
 from openpyxl.formula.translate import Translator
-from typing import List, Dict, Any
+from openpyxl.utils import get_column_letter
 
 
 class ExcelHelper:
@@ -89,7 +90,7 @@ class ExcelHelper:
                 try:
                     if len(str(cell.value)) > max_length:
                         max_length = len(cell.value)
-                except:
+                except Exception:
                     pass
             adjusted_width = max_length + 2
             self.active_sheet.column_dimensions[column_letter].width = adjusted_width

@@ -1,5 +1,7 @@
-import pytest
 import os
+
+import pytest
+
 from excel_helper import ExcelHelper
 
 
@@ -117,3 +119,6 @@ def test_auto_fit_columns(excel_helper):
         excel_helper.active_sheet.column_dimensions["A"].width
         < excel_helper.active_sheet.column_dimensions["B"].width
     )
+
+if __name__ == "__main__":
+    pytest.main([__file__])
