@@ -12,7 +12,7 @@ pip install excel-helper
 
 ## Usage
 
-Here's a quick example of how to use ExcelHelper:
+Here's a quick example of how to use ExcelHelper (for comprehensive documentations refer [Wiki](https://github.com/rahulgurujala/excel-helper/wiki)):
 
 ```python
 from excel_helper import ExcelHelper
