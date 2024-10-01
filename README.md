@@ -100,6 +100,9 @@ Create a new ExcelHelper instance.
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
+## Stats
+![Alt](https://repobeats.axiom.co/api/embed/464728268ce76a2f889214feca15739440a84c72.svg "Repobeats analytics image")
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
