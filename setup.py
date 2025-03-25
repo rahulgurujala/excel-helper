@@ -31,4 +31,7 @@ setup(
         "pandas>=2.2.2",
         "Jinja2>=3.1.4",
     ],
+    extras_require={
+        'windows': ['pywin32>=305'],
+    },
 )

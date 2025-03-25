@@ -10,6 +10,18 @@ You can install ExcelHelper using pip:
 pip install excel-helper
 ```
 
+## Windows-Specific Features
+
+Some features are only available on Windows:
+
+- Running Excel macros (requires `pywin32`)
+
+To install with Windows-specific dependencies:
+
+```bash
+pip install excel-helper[windows]
+```
+
 ## Usage
 
 Here's a quick example of how to use ExcelHelper (for comprehensive documentations refer [Wiki](https://github.com/rahulgurujala/excel-helper/wiki)):

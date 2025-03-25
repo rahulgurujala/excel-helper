@@ -26,8 +26,8 @@ class ColorScaleKwargs(TypedDict, total=False):
 class ExcelHelper:
     def __init__(self, filename: str):
         self.filename = filename
-        self.workbook = None
-        self.active_sheet = None
+        self.workbook: Optional[Workbook] = None
+        self.active_sheet: Optional[Worksheet] = None
 
     def open_workbook(self):
         """Open the Excel workbook."""
@@ -52,6 +52,7 @@ class ExcelHelper:
 
     def write_cell(self, row: int, col: int, value: Any):
         """Write a value to a specific cell."""
+        self._check_workbook_open()
         self.active_sheet.cell(row=row, column=col, value=value)
 
     def read_cell(self, row: int, col: int) -> Any:
@@ -115,12 +116,10 @@ class ExcelHelper:
         """Set a formula in a specific cell."""
         self.active_sheet.cell(row=row, column=col, value=formula)
 
-    def get_formula(self, row: int, col: int) -> str:
+    def get_formula(self, row: int, col: int) -> Optional[str]:
         """Get the formula from a specific cell."""
-        return (
-            self.active_sheet.cell(row=row, column=col).data_type == "f"
-            and self.active_sheet.cell(row=row, column=col).value
-        )
+        cell = self.active_sheet.cell(row=row, column=col)
+        return cell.value if cell.data_type == "f" else None
 
     def copy_formula(self, from_row: int, from_col: int, to_row: int, to_col: int):
         """Copy a formula from one cell to another, adjusting cell references."""
@@ -219,25 +218,23 @@ class ExcelHelper:
         y_axis: str,
         location: str,
     ) -> None:
-        """
-        Create a chart in the Excel workbook.
-        """
-        chart = BarChart() if chart_type.lower() == "bar" else None
-        # TODO Add more chart types as needed
-
-        if chart:
-            data = Reference(
-                self.active_sheet,
-                min_col=data_range[0],
-                min_row=data_range[1],
-                max_col=data_range[2],
-                max_row=data_range[3],
-            )
-            chart.add_data(data, titles_from_data=True)
-            chart.title = title
-            chart.x_axis.title = x_axis
-            chart.y_axis.title = y_axis
-            self.active_sheet.add_chart(chart, location)
+        """Create a chart in the Excel workbook."""
+        if chart_type.lower() != "bar":
+            raise ValueError("Currently only 'bar' chart type is supported")
+            
+        chart = BarChart()
+        data = Reference(
+            self.active_sheet,
+            min_col=data_range[0],
+            min_row=data_range[1],
+            max_col=data_range[2],
+            max_row=data_range[3],
+        )
+        chart.add_data(data, titles_from_data=True)
+        chart.title = title
+        chart.x_axis.title = x_axis
+        chart.y_axis.title = y_axis
+        self.active_sheet.add_chart(chart, location)
 
     def create_pivot_table(
         self,
@@ -247,40 +244,44 @@ class ExcelHelper:
         columns: List[str],
         values: List[str],
     ) -> None:
-        """
-        Create a pivot table in the Excel workbook.
-        """
-        pivot_sheet: Worksheet = self.workbook.create_sheet("PivotTable")
-        pivot_sheet.cell(row=1, column=1, value="Pivot Table")
-
-        # Create a PivotTable
-        pivot_table: Table = Table(
-            displayName="PivotTable",
-            ref=f"A1:{get_column_letter(len(source_data[0]))}{len(source_data)}",
-        )
-        pivot_sheet.add_table(pivot_table)
-
-        for row in source_data:
-            pivot_sheet.append(row)
-
-        pivot_fields: List[dict] = [
-            {
-                "sourceField": field,
-                "orientation": (
-                    "row"
-                    if field in rows
-                    else "column" if field in columns else "value"
-                ),
-            }
-            for field in rows + columns + values
-        ]
-
-        pivot_sheet.pivot_tables.add(
-            "PivotTable1",
-            f"A1:{get_column_letter(len(source_data[0]))}{len(source_data)}",
-            pivot_location,
-            pivot_fields,
-        )
+        """Create a pivot table in the Excel workbook."""
+        if not source_data or not source_data[0]:
+            raise ValueError("Source data cannot be empty")
+    
+        try:
+            pivot_sheet: Worksheet = self.workbook.create_sheet("PivotTable")
+            pivot_sheet.cell(row=1, column=1, value="Pivot Table")
+    
+            # Create a PivotTable
+            pivot_table: Table = Table(
+                displayName="PivotTable",
+                ref=f"A1:{get_column_letter(len(source_data[0]))}{len(source_data)}",
+            )
+            pivot_sheet.add_table(pivot_table)
+    
+            for row in source_data:
+                pivot_sheet.append(row)
+    
+            pivot_fields: List[dict] = [
+                {
+                    "sourceField": field,
+                    "orientation": (
+                        "row" if field in rows
+                        else "column" if field in columns 
+                        else "value"
+                    ),
+                }
+                for field in rows + columns + values
+            ]
+    
+            pivot_sheet.pivot_tables.add(
+                "PivotTable1",
+                f"A1:{get_column_letter(len(source_data[0]))}{len(source_data)}",
+                pivot_location,
+                pivot_fields,
+            )
+        except Exception as e:
+            raise ValueError(f"Failed to create pivot table: {str(e)}") from e
 
     def add_data_validation(
         self,
@@ -341,17 +342,18 @@ class ExcelHelper:
         """
         if not self._is_windows():
             raise OSError("This method can only be run on Windows.")
-
+    
         try:
             import win32com.client
-
+    
             excel: Any = win32com.client.Dispatch("Excel.Application")
             wb: Any = excel.Workbooks.Open(self.filename)
             excel.Application.Run(macro_name)
             wb.Save()
+        except ImportError as e:
+            raise ImportError("win32com.client is required to run macros. Please install pywin32.") from e
         except Exception as e:
-            # sourcery skip: raise-specific-error
-            raise Exception(f"Error running macro: {str(e)}") from e
+            raise RuntimeError(f"Error running macro: {str(e)}") from e
         finally:
             if "excel" in locals():
                 excel.Application.Quit()
@@ -361,6 +363,11 @@ class ExcelHelper:
         import platform
 
         return platform.system().lower() == "windows"
+
+    def _check_workbook_open(self) -> None:
+        """Check if workbook is open."""
+        if self.workbook is None:
+            raise ValueError("Workbook is not open. Call open_workbook() first.")
 
     def to_dataframe(
         self,
