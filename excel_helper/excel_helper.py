@@ -10,9 +10,9 @@ from openpyxl.chart import BarChart, Reference
 from openpyxl.formatting.rule import ColorScaleRule
 from openpyxl.formula.translate import Translator
 from openpyxl.utils import get_column_letter
+from openpyxl.utils.cell import coordinate_from_string, column_index_from_string
 from openpyxl.workbook.workbook import Workbook
 from openpyxl.worksheet.datavalidation import DataValidation
-from openpyxl.worksheet.table import Table
 from openpyxl.worksheet.worksheet import Worksheet
 
 
@@ -45,6 +45,8 @@ class ExcelHelper:
 
     def select_sheet(self, sheet_name: str):
         """Select a sheet by name."""
+        self._check_workbook_open()
+
         if sheet_name in self.workbook.sheetnames:
             self.active_sheet = self.workbook[sheet_name]
         else:
@@ -52,12 +54,13 @@ class ExcelHelper:
 
     def write_cell(self, row: int, col: int, value: Any):
         """Write a value to a specific cell."""
-        self._check_workbook_open()
-        self.active_sheet.cell(row=row, column=col, value=value)
+        sheet = self._check_active_sheet()
+        sheet.cell(row=row, column=col, value=value)
 
     def read_cell(self, row: int, col: int) -> Any:
         """Read the value from a specific cell."""
-        return self.active_sheet.cell(row=row, column=col).value
+        sheet = self._check_active_sheet()
+        return sheet.cell(row=row, column=col).value
 
     def write_row(self, row: int, data: List[Any]):
         """Write a list of values to a row."""
@@ -66,7 +69,8 @@ class ExcelHelper:
 
     def read_row(self, row: int) -> List[Any]:
         """Read all values from a row."""
-        return [cell.value for cell in self.active_sheet[row]]
+        sheet = self._check_active_sheet()
+        return [cell.value for cell in sheet[row]]
 
     def write_column(self, col: int, data: List[Any]):
         """Write a list of values to a column."""
@@ -75,7 +79,8 @@ class ExcelHelper:
 
     def read_column(self, col: int) -> List[Any]:
         """Read all values from a column."""
-        return [cell.value for cell in self.active_sheet[get_column_letter(col)]]
+        sheet = self._check_active_sheet()
+        return [cell.value for cell in sheet[get_column_letter(col)]]
 
     def write_range(self, start_row: int, start_col: int, data: List[List[Any]]):
         """Write a 2D list of values to a range of cells."""
@@ -87,44 +92,57 @@ class ExcelHelper:
         self, start_row: int, start_col: int, end_row: int, end_col: int
     ) -> List[List[Any]]:
         """Read a range of cells and return a 2D list of values."""
+        sheet = self._check_active_sheet()
         return [
             [cell.value for cell in row]
-            for row in self.active_sheet.iter_rows(
+            for row in sheet.iter_rows(
                 min_row=start_row, min_col=start_col, max_row=end_row, max_col=end_col
             )
         ]
 
     def apply_style(self, row: int, col: int, style: Dict[str, Any]):
         """Apply a style to a specific cell."""
-        cell = self.active_sheet.cell(row=row, column=col)
+        sheet = self._check_active_sheet()
+        cell = sheet.cell(row=row, column=col)
         for key, value in style.items():
             setattr(cell, key, value)
 
     def auto_fit_columns(self):
         """Auto-fit all columns in the active sheet."""
-        for column in self.active_sheet.columns:
-            max_length = 0
+        sheet = self._check_active_sheet()
+
+        for column in sheet.columns:
             column_letter = get_column_letter(column[0].column)
+            max_length = 0
+
             for cell in column:
-                with contextlib.suppress(Exception):
-                    if len(str(cell.value)) > max_length:
-                        max_length = len(cell.value)
-            adjusted_width = max_length + 2
-            self.active_sheet.column_dimensions[column_letter].width = adjusted_width
+                value = cell.value
+                if value is None:
+                    continue
+
+                value_length = len(str(value))
+                if value_length > max_length:
+                    max_length = value_length
+
+            if max_length:
+                sheet.column_dimensions[column_letter].width = max_length + 2
 
     def set_formula(self, row: int, col: int, formula: str):
         """Set a formula in a specific cell."""
-        self.active_sheet.cell(row=row, column=col, value=formula)
+        sheet = self._check_active_sheet()
+        sheet.cell(row=row, column=col, value=formula)
 
     def get_formula(self, row: int, col: int) -> Optional[str]:
         """Get the formula from a specific cell."""
-        cell = self.active_sheet.cell(row=row, column=col)
+        sheet = self._check_active_sheet()
+        cell = sheet.cell(row=row, column=col)
         return cell.value if cell.data_type == "f" else None
 
     def copy_formula(self, from_row: int, from_col: int, to_row: int, to_col: int):
         """Copy a formula from one cell to another, adjusting cell references."""
-        source_cell = self.active_sheet.cell(row=from_row, column=from_col)
-        target_cell = self.active_sheet.cell(row=to_row, column=to_col)
+        sheet = self._check_active_sheet()
+        source_cell = sheet.cell(row=from_row, column=from_col)
+        target_cell = sheet.cell(row=to_row, column=to_col)
 
         if source_cell.data_type == "f":
             translated_formula = Translator(
@@ -221,10 +239,11 @@ class ExcelHelper:
         """Create a chart in the Excel workbook."""
         if chart_type.lower() != "bar":
             raise ValueError("Currently only 'bar' chart type is supported")
-            
+
+        sheet = self._check_active_sheet()
         chart = BarChart()
         data = Reference(
-            self.active_sheet,
+            sheet,
             min_col=data_range[0],
             min_row=data_range[1],
             max_col=data_range[2],
@@ -234,7 +253,7 @@ class ExcelHelper:
         chart.title = title
         chart.x_axis.title = x_axis
         chart.y_axis.title = y_axis
-        self.active_sheet.add_chart(chart, location)
+        sheet.add_chart(chart, location)
 
     def create_pivot_table(
         self,
@@ -243,45 +262,37 @@ class ExcelHelper:
         rows: List[str],
         columns: List[str],
         values: List[str],
+        aggfunc: str = "sum",
     ) -> None:
-        """Create a pivot table in the Excel workbook."""
+        """Create a pivot-style summary table in the active worksheet."""
         if not source_data or not source_data[0]:
             raise ValueError("Source data cannot be empty")
-    
-        try:
-            pivot_sheet: Worksheet = self.workbook.create_sheet("PivotTable")
-            pivot_sheet.cell(row=1, column=1, value="Pivot Table")
-    
-            # Create a PivotTable
-            pivot_table: Table = Table(
-                displayName="PivotTable",
-                ref=f"A1:{get_column_letter(len(source_data[0]))}{len(source_data)}",
-            )
-            pivot_sheet.add_table(pivot_table)
-    
-            for row in source_data:
-                pivot_sheet.append(row)
-    
-            pivot_fields: List[dict] = [
-                {
-                    "sourceField": field,
-                    "orientation": (
-                        "row" if field in rows
-                        else "column" if field in columns 
-                        else "value"
-                    ),
-                }
-                for field in rows + columns + values
+
+        sheet = self._check_active_sheet()
+
+        header, *data_rows = source_data
+        data_frame = pd.DataFrame(data_rows, columns=header)
+
+        pivot_df = pd.pivot_table(
+            data_frame,
+            index=rows or None,
+            columns=columns or None,
+            values=values,
+            aggfunc=aggfunc,
+            fill_value=0,
+        )
+
+        if isinstance(pivot_df.columns, pd.MultiIndex):
+            pivot_df.columns = [
+                " ".join(str(level) for level in column if level not in ("", None))
+                for column in pivot_df.columns
             ]
-    
-            pivot_sheet.pivot_tables.add(
-                "PivotTable1",
-                f"A1:{get_column_letter(len(source_data[0]))}{len(source_data)}",
-                pivot_location,
-                pivot_fields,
-            )
-        except Exception as e:
-            raise ValueError(f"Failed to create pivot table: {str(e)}") from e
+
+        pivot_df = pivot_df.reset_index()
+
+        start_row, start_col = self._coordinate_to_row_col(pivot_location)
+        rows_to_write: List[List[Any]] = [pivot_df.columns.tolist()] + pivot_df.values.tolist()
+        self.write_range(start_row, start_col, rows_to_write)
 
     def add_data_validation(
         self,
@@ -293,12 +304,13 @@ class ExcelHelper:
         """
         Add data validation to a range of cells.
         """
+        sheet = self._check_active_sheet()
         dv = DataValidation(
             type=validation_type,
             operator=validation_criteria,
             formula1=validation_value,
         )
-        self.active_sheet.add_data_validation(dv)
+        sheet.add_data_validation(dv)
         dv.add(cell_range)
 
     def apply_conditional_formatting(
@@ -312,13 +324,14 @@ class ExcelHelper:
         """
         if rule_type != "color_scale":
             raise ValueError(f"Unsupported rule_type: {rule_type}")
+        sheet = self._check_active_sheet()
         rule = ColorScaleRule(
             start_color=kwargs.get("start_color", "FFFFFF"),
             end_color=kwargs.get("end_color", "FF0000"),
             start_type=kwargs.get("start_type", "min"),
             end_type=kwargs.get("end_type", "max"),
         )
-        self.active_sheet.conditional_formatting.add(cell_range, rule)
+        sheet.conditional_formatting.add(cell_range, rule)
 
     def create_macro(self, macro_name: str, macro_code: str) -> None:
         """
@@ -369,6 +382,17 @@ class ExcelHelper:
         if self.workbook is None:
             raise ValueError("Workbook is not open. Call open_workbook() first.")
 
+    def _check_active_sheet(self) -> Worksheet:
+        """Ensure there is an active worksheet and return it."""
+        self._check_workbook_open()
+        if self.active_sheet is None:
+            raise ValueError("No active sheet selected.")
+        return self.active_sheet
+
+    def _coordinate_to_row_col(self, cell_reference: str) -> Tuple[int, int]:
+        column_letter, row = coordinate_from_string(cell_reference)
+        return row, column_index_from_string(column_letter)
+
     def to_dataframe(
         self,
         sheet_name: Union[str, None] = None,
@@ -379,13 +403,26 @@ class ExcelHelper:
         if sheet_name:
             self.select_sheet(sheet_name)
 
-        data = self.read_range(
-            start_row,
-            start_col,
-            self.active_sheet.max_row,
-            self.active_sheet.max_column,
+        sheet = self._check_active_sheet()
+
+        rows = list(
+            sheet.iter_rows(
+                min_row=start_row,
+                min_col=start_col,
+                max_row=sheet.max_row,
+                max_col=sheet.max_column,
+                values_only=True,
+            )
         )
-        return pd.DataFrame(data[1:], columns=data[0])
+
+        if not rows or all(cell is None for cell in rows[0]):
+            # Nothing meaningful to export
+            return pd.DataFrame()
+
+        header = list(rows[0])
+        data_rows = [list(row) for row in rows[1:] if any(cell is not None for cell in row)]
+
+        return pd.DataFrame(data_rows, columns=header)
 
     def from_dataframe(
         self,
@@ -403,9 +440,54 @@ class ExcelHelper:
         if sheet_name:
             self.select_sheet(sheet_name)
 
+        self._check_active_sheet()
+
         self.write_range(
             start_row, start_col, [df.columns.tolist()] + df.values.tolist()
         )
+
+    def freeze_panes(self, cell_reference: str) -> None:
+        """Freeze panes at the specified cell reference."""
+        sheet = self._check_active_sheet()
+        sheet.freeze_panes = cell_reference
+
+    def merge_cells(
+        self, start_row: int, start_col: int, end_row: int, end_col: int
+    ) -> None:
+        """Merge a rectangular range of cells."""
+        sheet = self._check_active_sheet()
+        sheet.merge_cells(
+            start_row=start_row,
+            start_column=start_col,
+            end_row=end_row,
+            end_column=end_col,
+        )
+
+    def unmerge_cells(
+        self, start_row: int, start_col: int, end_row: int, end_col: int
+    ) -> None:
+        """Unmerge a rectangular range of cells."""
+        sheet = self._check_active_sheet()
+        sheet.unmerge_cells(
+            start_row=start_row,
+            start_column=start_col,
+            end_row=end_row,
+            end_column=end_col,
+        )
+
+    def clear_range(
+        self, start_row: int, start_col: int, end_row: int, end_col: int
+    ) -> None:
+        """Clear the contents of a range of cells."""
+        sheet = self._check_active_sheet()
+        for row in sheet.iter_rows(
+            min_row=start_row,
+            min_col=start_col,
+            max_row=end_row,
+            max_col=end_col,
+        ):
+            for cell in row:
+                cell.value = None
 
     def use_template(
         self, template_file: str, output_file: str, context: Dict[str, Any]

@@ -74,6 +74,9 @@ excel.save_workbook()
 - Apply styles to cells
 - Auto-fit column widths
 - Work with formulas (SUM, AVERAGE, COUNT, IF, VLOOKUP)
+- Import from and export to Pandas DataFrames
+- Freeze panes, merge/unmerge cells, and clear ranges for quick formatting tweaks
+- Add data validation, conditional formatting, charts, and generate pivot-style summaries
 
 ## API Reference
 
